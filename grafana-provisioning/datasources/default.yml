@@ -30,8 +30,8 @@ datasources:
 
   # 3. OpenSearch (Logs)
   - name: OpenSearch
-    uid: opensearch
-    type: opensearch
+    uid: grafana-opensearch-datasource
+    type: grafana-opensearch-datasource
     access: proxy
     url: http://opensearch:9200
     jsonData:

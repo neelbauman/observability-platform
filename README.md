@@ -57,10 +57,12 @@
 
 このセクションは、可観測性スタック（Grafana, Tempo, OpenSearch等）自体をホストマシン（ローカルPCまたは共有サーバー）で起動するためのものです。**全プロジェクト共通で、通常は1回だけ実行します。**
 
+手順2,3は、 `setup.sh` を実行すればよい。
+
 1.  **リポジトリのクローン:**
     ```bash
-    git clone [https://git.company.com/internal-observability-platform.git](https://git.company.com/internal-observability-platform.git)
-    cd internal-observability-platform
+    git clone [https://git.company.com/observability-platform.git](https://git.company.com/observability-platform.git)
+    cd observability-platform
     ```
 
 2.  **データ保存ディレクトリの作成:**
@@ -81,6 +83,12 @@
 
     # OpenSearch (UID 1000)
     sudo chown -R 1000:1000 ./data/opensearch
+
+    # Prometheus (UID 65534)
+    sudo chown -R 65534:65534 ./data/prometheus
+
+    # Grafana Tempo (UID 10001)
+    sudo chown -R 10001:10001 ./data/tempo
     ```
 
 4.  **スタックの起動:**
