@@ -1,0 +1,26 @@
+# dapr-config.yml
+apiVersion: dapr.io/v1alpha1
+kind: Configuration
+metadata:
+  name: dapr-config-otel
+spec:
+  # 1. トレースの設定 (OTLP)
+  tracing:
+    samplingRate: "${DAPR_TRACING_SAMPLING_RATE:-1}" # "1" = 100% (開発時推奨)
+    stdout: false
+    otel:
+      endpoint: "${DAPR_OTEL_ENDPOINT:-otel-collector:4317}" # OTel Collector (gRPC) のアドレス
+      isSecure: false
+      protocol: grpc
+
+  # 2. メトリクスの設定 (Prometheus形式)
+  # DaprはOTel形式でのメトリクス送信も可能ですが、
+  # Prometheus形式で公開し、OTel Collector (またはPrometheus) がScrapeする方が一般的です。
+  metrics:
+    enabled: true
+
+  # 3. (参考) Daprサイドカー自体のログレベル
+  logging:
+    apiLogging:
+      enabled: true
+      # ...

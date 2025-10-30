@@ -1,0 +1,4 @@
+# .gitignore
+
+# 永続化データ
+/data/

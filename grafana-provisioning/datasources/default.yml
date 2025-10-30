@@ -1,0 +1,46 @@
+# grafana-provisioning/datasources/default.yml
+
+apiVersion: 1
+
+deleteDatasources:
+  - name: Prometheus
+    uid: prometheus
+  - name: Tempo
+    uid: tempo
+  - name: OpenSearch
+    uid: opensearch
+
+datasources:
+  # 1. Prometheus
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+
+  # 2. Tempo (★ Jaegerから変更)
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    # Grafana 10+ では、ログ連携(Trace to Logs)は
+    # "Logs" データソース側で設定するため、ここでは不要
+
+  # 3. OpenSearch (Logs)
+  - name: OpenSearch
+    uid: opensearch
+    type: opensearch
+    access: proxy
+    url: http://opensearch:9200
+    jsonData:
+      database: 'my-app-logs' 
+      timeField: "@timestamp"
+      logMessageField: "log"
+    # ★ ここで Tempo (Trace) への連携を設定
+    # これにより、ログからTrace IDをクリックしてTempoを開ける
+    tracesToLogs:
+      datasourceUid: 'tempo' # TempoデータソースのUID
+      spanIdField: 'span_id'
+      traceIdField: 'trace_id'

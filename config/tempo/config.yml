@@ -1,0 +1,36 @@
+server:
+  http_listen_port: 3200
+
+# OTel CollectorからOTLP (gRPC) でトレースを受け取る設定
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4318 # OTel Collectorからの送信先 (内部ポート)
+
+distributor:
+  receivers: [otlp]
+
+# トレースをローカルファイルシステムに保存
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo # コンテナ内の永続化パス (docker-compose.ymlと一致)
+
+# Tempoの内部コンポーネント設定 (このままで動作)
+ingester:
+  lifecycler:
+    ring:
+      replication_factor: 1
+      kvstore:
+        store: memberlist
+
+compactor:
+  compaction:
+    block_retention: 1h # 開発用にデータ保持期間を短く設定 (本番では 24h など)
+
+memberlist:
+  bind_port: 7946
+  join_members:
+    - tempo

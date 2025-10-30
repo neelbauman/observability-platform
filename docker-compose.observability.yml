@@ -1,0 +1,163 @@
+# ===================================================================
+#  可観測性スタック (Observability Stack) - 修正版
+# ===================================================================
+# 起動コマンド: docker-compose -f docker-compose.observability.yml up -d
+#
+# 事前準備 (ホストマシン):
+# 1. 以下のディレクトリを作成:
+#    mkdir -p ./data/prometheus ./data/grafana ./data/opensearch
+#    mkdir -p ./config/otel-collector ./config/prometheus ./config/fluent-bit
+#    mkdir -p ./grafana-provisioning/datasources ./grafana-provisioning/dashboards
+#
+# 2. 必要な設定ファイル (.yml, .conf, .json) を上記 config / grafana-provisioning に配置。
+#
+# 3. データディレクトリの権限を設定 (重要):
+#    sudo chown -R 472:472 ./data/grafana
+#    sudo chown -R 1000:1000 ./data/opensearch
+
+version: '3.8'
+
+configs:
+  otel-collector-config:
+    file: ./config/otel-collector/config.yml
+  prometheus-config:
+    file: ./config/prometheus/prometheus.yml
+  fluent-bit-config:
+    file: ./config/fluent-bit/fluent-bit.conf
+  tempo-config:
+    file: ./config/tempo/config.yml
+
+services:
+  # ----------------------------------------
+  # 1. メトリクス (Prometheus) - Apache 2.0
+  # ----------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.47.1
+    container_name: prometheus
+    volumes:
+      - ./data/prometheus:/prometheus
+    configs:
+      - source: prometheus-config
+        target: /etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - observability-net
+    restart: unless-stopped
+
+  # ----------------------------------------
+  # 2. トレース (Grafana Tempo) - AGPL v3.0
+  # ----------------------------------------
+  tempo:
+    image: grafana/tempo:2.4.1
+    container_name: tempo
+    command: ["-config.file=/etc/tempo/config.yml"]
+    configs:
+      - source: tempo-config
+        target: /etc/tempo/config.yml
+    volumes:
+      - ./data/tempo:/var/tempo
+    ports:
+      - "3200:3200" # Grafanaからの接続用
+      # OTLP (4318) はOTel Collectorからのみアクセスするため、ホスト公開不要
+    networks:
+      - observability-net
+    restart: unless-stopped
+
+  # ----------------------------------------
+  # 3. ログ (OpenSearch) - Apache 2.0
+  # ----------------------------------------
+  opensearch:
+    image: opensearchproject/opensearch:2.11.0
+    container_name: opensearch
+    environment:
+      - "discovery.type=single-node"
+      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+      - "DISABLE_SECURITY_PLUGIN=true"
+      - "bootstrap.memory_lock=true"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - ./data/opensearch:/usr/share/opensearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - observability-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sS -k http://localhost:9200/_cluster/health | grep -qE 'green|yellow'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ----------------------------------------
+  # 4. ログ収集 (Fluent Bit) - Apache 2.0
+  # ----------------------------------------
+  fluent-bit:
+    image: fluent/fluent-bit:2.1
+    container_name: fluent-bit
+    ports:
+      - "24224:24224" # Forward Input
+    configs:
+      - source: fluent-bit-config
+        target: /fluent-bit/etc/fluent-bit.conf
+    networks:
+      - observability-net
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ----------------------------------------
+  # 5. データハブ (OTel Collector) - Apache 2.0
+  # ----------------------------------------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.88.0
+    container_name: otel-collector
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    configs:
+      - source: otel-collector-config
+        target: /etc/otelcol-contrib/config.yaml
+    ports:
+      - "4317:4317"   # OTLP gRPC (Daprから)
+      - "8889:8889"   # Prometheus Scrape用
+    networks:
+      - observability-net
+    depends_on:
+      - tempo
+      - opensearch
+      - fluent-bit
+    restart: unless-stopped
+
+  # ----------------------------------------
+  # 6. 可視化 (Grafana) - AGPL v3.0
+  # ----------------------------------------
+  grafana:
+    image: grafana/grafana:10.1.5
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data/grafana:/var/lib/grafana
+      - ./grafana-provisioning:/etc/grafana/provisioning
+    environment:
+      - "GF_SECURITY_ADMIN_USER=admin"
+      - "GF_SECURITY_ADMIN_PASSWORD=admin"
+    networks:
+      - observability-net
+    depends_on:
+      - prometheus
+      - tempo
+      - opensearch
+    restart: unless-stopped
+
+# 共通ネットワーク
+networks:
+  observability-net:
+    name: observability-net
+    driver: bridge

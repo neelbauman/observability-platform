@@ -1,0 +1,40 @@
+receivers:
+  otlp: # Daprから OTLP gRPC (4317) で受け取る
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch: # 効率化のためバッチ処理
+
+exporters:
+  # 1. トレースをTempoに送信
+  otlp:
+    endpoint: tempo:4318 # TempoのgRPCポート(内部)
+    tls:
+      insecure: true
+  
+  # 2. メトリクスをPrometheusが読める形式で公開 (8889)
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    
+  # 3. ログをFluent Bitに転送 (オプション)
+  forward:
+    endpoint: fluent-bit:24224
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp] # ★ 出力先を 'otlp' (Tempo行き) に変更
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [forward]
