@@ -1,0 +1,32 @@
+# docker-compose.tempo-s3.yml
+# (オプション: S3ストレージ版 Tempo で base.yml の定義を上書き)
+
+configs:
+  tempo-s3-config:
+    file: ./config/tempo/config.s3.yml
+
+services:
+  # 2. トレース (Grafana Tempo) - S3 (rclone) 保存
+  tempo:
+    image: grafana/tempo:latest
+    container_name: tempo
+    # command: を使い、.env のシークレットを引数として渡す
+    command: 
+      - "-config.file=/etc/tempo/config.yml"
+      - "-storage.s3.access_key=${RCLONE_S3_USER}"
+      - "-storage.s3.secret_key=${RCLONE_S3_PASS}"
+    configs:
+      - source: tempo-s3-config
+        target: /etc/tempo/config.yml
+    volumes:
+      - tempo-wal-data:/var/tempo/wal # WAL(バッファ)用の名前付きボリューム
+    ports: ["3200:3200"]
+    networks: [observability-net]
+    restart: unless-stopped
+    depends_on:
+      - otel-collector
+      - rclone-s3-gateway
+
+volumes:
+  tempo-wal-data: # S3版Tempo用のWALボリューム
+    driver: local

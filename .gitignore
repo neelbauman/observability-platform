@@ -1,4 +1,7 @@
 # .gitignore
 
+.env
+rclone.conf
+
 # 永続化データ
 /data/

@@ -1,0 +1,55 @@
+name: Release Creation
+
+# 目的: Gitで「vX.Y.Z」のようなタグをプッシュした時に、このワークフローを実行する。
+on:
+  push:
+    tags:
+      # vで始まり、ドット区切りの数字が続くタグパターンにマッチ（例: v1.0.0, v2.3.4）
+      - 'v[0-9]+.[0-9]+.[0-9]+' 
+
+jobs:
+  create_release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # リリースを作成するためにこの権限が必要
+
+    steps:
+      # 1. コードのチェックアウト
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Releaseノートの差分を取得するため、全履歴を取得
+          fetch-depth: 0 
+          
+      # 2. リリースノート（変更内容）の自動生成
+      - name: Generate Release Body from Commits
+        id: get_changes
+        # Bashスクリプトで前回のタグと現在のタグ間のコミットログを取得し、整形する
+        run: |
+          # 以前のタグ名を取得。もしタグがなければ、リポジトリの最初のコミットを使用
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 ${{ github.ref_name }}^ 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          
+          # 以前のタグから現在のタグまでのコミットログを取得
+          # マージコミットやGitHub Actionsのコミットを除外
+          BODY_CONTENT=$(git log --pretty=format:"* %s (%an)" ${PREVIOUS_TAG}..${{ github.ref_name }} | sed '/Merge pull request/d' | sed '/GitHub Actions/d')
+          
+          # Markdownのヘッダーを追加
+          BODY_CONTENT="# 変更内容\n\n${BODY_CONTENT}"
+          
+          # 環境変数として次のステップに渡す
+          echo "release_body<<EOF" >> $GITHUB_ENV
+          echo "$BODY_CONTENT" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      # 3. GitHub Releaseの作成
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          # タグ名とリリース名を現在のタグ名に設定
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          # 2.で生成した本文を適用
+          body: ${{ env.release_body }}
+          draft: false # ドラフトにせず、即時公開
+          prerelease: false
+          # トークンはGitHub Actionsが自動で提供するため、secretsの指定は不要

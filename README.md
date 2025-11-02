@@ -61,7 +61,7 @@
 
 1.  **リポジトリのクローン:**
     ```bash
-    git clone [https://git.company.com/observability-platform.git](https://git.company.com/observability-platform.git)
+    git clone https://git.company.com/observability-platform.git
     cd observability-platform
     ```
 

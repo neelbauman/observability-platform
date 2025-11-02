@@ -1,0 +1,29 @@
+# docker-compose.tempo-local.yml
+# (オプション: ローカルストレージ版 Tempo)
+
+configs:
+  tempo-local-config:
+    file: ./config/tempo/config.local.yml # ★ ローカル用設定
+
+services:
+  tempo:
+    image: grafana/tempo:2.4.1
+    container_name: tempo
+    command: ["-config.file=/etc/tempo/config.yml"]
+    configs:
+      - source: tempo-local-config
+        target: /etc/tempo/config.yml
+    volumes:
+      - ./data/tempo:/var/tempo # ★ 永続化パス
+    ports:
+      - "3200:3200"
+    networks:
+      - observability-net
+    restart: unless-stopped
+    depends_on:
+      - otel-collector
+
+  # OTel Collector に Tempo への依存を追記
+  otel-collector:
+    depends_on:
+      - tempo

@@ -1,0 +1,46 @@
+# docker-compose.backends.yml
+
+configs:
+  rclone-config:
+    file: ./config/rclone/rclone.conf
+
+services:
+  # 7. メタデータDB (PostgreSQL)
+  postgres-metadata:
+    image: postgres:18
+    container_name: postgres-metadata
+    environment:
+      # .env からスーパーユーザーの資格情報を読み込む
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-metadata-data:/var/lib/postgresql
+    ports: ["5432:5432"]
+    networks: [observability-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # 8. 大容量ストレージ (rclone S3 GW)
+  rclone-s3-gateway:
+    image: rclone/rclone:latest
+    container_name: rclone-s3-gateway
+    command: >
+      serve s3 gdrive_remote:observability-data
+      --addr :9000
+      --s3-no-vhost
+      --s3-auth-user "${RCLONE_S3_USER}"
+      --s3-auth-pass "${RCLONE_S3_PASS}"
+    configs:
+      - source: rclone-config
+        target: /config/rclone/rclone.conf
+    networks: [observability-net]
+    restart: unless-stopped
+
+# base.yml で定義されたボリューム/ネットワークを使用
+volumes:
+  postgres-metadata-data:
+    driver: local

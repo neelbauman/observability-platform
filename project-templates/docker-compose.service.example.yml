@@ -1,0 +1,63 @@
+# docker-compose.yml (サービス側の例)
+version: '3.8'
+
+services:
+  # --- Python User Service ---
+  user-service:
+    container_name: user-service
+    build:
+      context: ./services/user-service
+    networks:
+      - default
+      - observability-net # ★可観測性スタックのネットワークに接続
+    environment:
+      - DAPR_HTTP_PORT=3500 # Daprサイドカーのポートをアプリに教える
+      - APP_PORT=8000 # アプリがリッスンするポート
+    # ★ depends_on に dapr サイドカーを追加
+    depends_on:
+      - user-service-dapr
+
+  # --- Dapr Sidecar for User Service ---
+  user-service-dapr:
+    image: "daprio/daprd:1.12" # Daprデーモン
+    container_name: user-service-dapr
+    command:
+      - "./daprd"
+      - "-app-id"
+      - "user-service" # ★Dapr上のサービス名
+      - "-app-port"
+      - "8000"         # ★アプリ本体がリッスンするポート
+      - "-dapr-http-port"
+      - "3500"
+      - "-components-path"
+      - "/components"  # (ステートストア等を使う場合)
+      - "-config"
+      - "/config/dapr-config.yml" # ★可観測性設定ファイル
+    volumes:
+      # ★先ほど作成した設定ファイルをマウント
+      - ./dapr-config.yml:/config/dapr-config.yml
+    networks:
+      - default
+      - observability-net # ★可観測性スタックのネットワークに接続
+    depends_on:
+      # OTel Collectorが起動してからDaprが起動するようにする
+      - otel-collector # (前回docker-compose.observability.ymlで定義したコンテナ名)
+    # ★ アプリのネットワーク名前空間を共有しない（サイドカーパターン）
+
+# ★ 可観測性スタックのネットワークを "external" として定義
+networks:
+  observability-net:
+    external: true
+  default:
+    driver: bridge
+
+# ★ 可観測性スタックのコンテナ名（otel-collectorなど）を
+#     名前解決するために "external" として定義しておく
+services:
+  otel-collector:
+    external: true
+  jaeger:
+    external: true
+  prometheus:
+    external: true
+  # ... (observability.ymlで定義した他コンテナ)

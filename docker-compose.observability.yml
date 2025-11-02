@@ -1,19 +1,16 @@
+# !deprecated
+# docker-compose.observability.yml
+#
 # ===================================================================
-#  可観測性スタック (Observability Stack) - 修正版
+#  可観測性スタック (Langfuse 統合版)
 # ===================================================================
 # 起動コマンド: docker-compose -f docker-compose.observability.yml up -d
 #
 # 事前準備 (ホストマシン):
-# 1. 以下のディレクトリを作成:
-#    mkdir -p ./data/prometheus ./data/grafana ./data/opensearch
-#    mkdir -p ./config/otel-collector ./config/prometheus ./config/fluent-bit
-#    mkdir -p ./grafana-provisioning/datasources ./grafana-provisioning/dashboards
+# 1. 必要な設定ファイル (.yml, .conf, .json) に加え、
+#    ./config/rclone/rclone.conf (Google Drive設定済み) を配置。
 #
-# 2. 必要な設定ファイル (.yml, .conf, .json) を上記 config / grafana-provisioning に配置。
-#
-# 3. データディレクトリの権限を設定 (重要):
-#    sudo chown -R 472:472 ./data/grafana
-#    sudo chown -R 1000:1000 ./data/opensearch
+# 2. setup.sh を実行して、全データディレクトリの権限を設定。
 
 version: '3.8'
 
@@ -26,10 +23,12 @@ configs:
     file: ./config/fluent-bit/fluent-bit.conf
   tempo-config:
     file: ./config/tempo/config.yml
+  rclone-config:
+    file: ./config/rclone/rclone.conf
 
 services:
   # ----------------------------------------
-  # 1. メトリクス (Prometheus) - Apache 2.0
+  # 1. メトリクス (Prometheus)
   # ----------------------------------------
   prometheus:
     image: prom/prometheus:v2.47.1
@@ -44,9 +43,14 @@ services:
     networks:
       - observability-net
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ----------------------------------------
-  # 2. トレース (Grafana Tempo) - AGPL v3.0
+  # 2. トレース (Grafana Tempo)
   # ----------------------------------------
   tempo:
     image: grafana/tempo:2.4.1
@@ -56,16 +60,17 @@ services:
       - source: tempo-config
         target: /etc/tempo/config.yml
     volumes:
-      - ./data/tempo:/var/tempo
+      - ./data/tempo:/var/tempo/wal # WAL (バッファ) 用
     ports:
-      - "3200:3200" # Grafanaからの接続用
-      # OTLP (4318) はOTel Collectorからのみアクセスするため、ホスト公開不要
+      - "3200:3200" 
     networks:
       - observability-net
+    depends_on:
+      - rclone-s3-gateway
     restart: unless-stopped
 
   # ----------------------------------------
-  # 3. ログ (OpenSearch) - Apache 2.0
+  # 3. ログ (OpenSearch) - インフラログ用
   # ----------------------------------------
   opensearch:
     image: opensearchproject/opensearch:2.11.0
@@ -96,13 +101,13 @@ services:
     restart: unless-stopped
 
   # ----------------------------------------
-  # 4. ログ収集 (Fluent Bit) - Apache 2.0
+  # 4. ログ収集 (Fluent Bit) - インフラログ用
   # ----------------------------------------
   fluent-bit:
     image: fluent/fluent-bit:2.1
     container_name: fluent-bit
     ports:
-      - "24224:24224" # Forward Input
+      - "24224:24224"
     configs:
       - source: fluent-bit-config
         target: /fluent-bit/etc/fluent-bit.conf
@@ -114,7 +119,7 @@ services:
     restart: unless-stopped
 
   # ----------------------------------------
-  # 5. データハブ (OTel Collector) - Apache 2.0
+  # 5. データハブ (OTel Collector)
   # ----------------------------------------
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.88.0
@@ -124,8 +129,8 @@ services:
       - source: otel-collector-config
         target: /etc/otelcol-contrib/config.yaml
     ports:
-      - "4317:4317"   # OTLP gRPC (Daprから)
-      - "8889:8889"   # Prometheus Scrape用
+      - "4317:4317"
+      - "8889:8889"
     networks:
       - observability-net
     depends_on:
@@ -135,7 +140,7 @@ services:
     restart: unless-stopped
 
   # ----------------------------------------
-  # 6. 可視化 (Grafana) - AGPL v3.0
+  # 6. 可視化 (Grafana)
   # ----------------------------------------
   grafana:
     image: grafana/grafana:latest
@@ -152,10 +157,86 @@ services:
     networks:
       - observability-net
     depends_on:
-      - prometheus
-      - tempo
-      - opensearch
+      prometheus:
+        condition: service_healthy
+      tempo:
+        condition: service_started
+      opensearch:
+        condition: service_healthy
     restart: unless-stopped
+
+  # ----------------------------------------
+  # 7. メタデータDB (PostgreSQL) - (Langfuse/MLflow/Dagster用)
+  # ----------------------------------------
+  postgres-metadata:  
+    image: postgres:15
+    container_name: postgres-metadata
+    environment:
+      - POSTGRES_USER=langfuse
+      - POSTGRES_PASSWORD=langfuse
+      - POSTGRES_DB=langfuse
+    volumes:
+      - ./data/postgresql:/var/lib/postgresql/data
+    ports:
+      - "5432:5432" # ホストからのデバッグ用
+    networks:
+      - observability-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ----------------------------------------
+  # ★ 8. 大容量ストレージ (rclone S3 GW) - (Langfuse/Tempo/MLflow用)
+  # ----------------------------------------
+  rclone-s3-gateway:
+    image: rclone/rclone:latest
+    container_name: rclone-s3-gateway
+    command: >
+      serve s3 gdrive_remote:observability-data # "gdrive_remote"はrclone.conf内のリモート名
+      --addr :9000
+      --s3-no-vhost
+      --s3-auth-user "obs-user"     # 共通アクセスキー
+      --s3-auth-pass "obs-password" # 共通シークレットキー
+    configs:
+      - source: rclone-config
+        target: /config/rclone/rclone.conf
+    # ports:
+    #   - "9000:9000" # デバッグ用
+    networks:
+      - observability-net
+    restart: unless-stopped
+
+  # ----------------------------------------
+  # ★ 9. LLMOps (Langfuse) - GenAIログ用
+  # ----------------------------------------
+  langfuse-server:
+    image: langfuse/langfuse:latest
+    container_name: langfuse-server
+    ports:
+      - "3001:3000" # Grafana(3000)と重複するため 3001 に変更
+    environment:
+      - DATABASE_URL=postgresql://langfuse:langfuse@postgres-metadata:5432/langfuse
+      - NEXTAUTH_URL=http://localhost:3001
+      - NEXTAUTH_SECRET=mysecretkey # 本番環境では要変更
+      # S3 (rclone GDrive) 設定
+      - S3_ENDPOINT=http://rclone-s3-gateway:9000
+      - S3_BUCKET=langfuse-bucket
+      - S3_ACCESS_KEY_ID=obs-user
+      - S3_SECRET_ACCESS_KEY=obs-password
+      - S3_REGION=auto
+      - S3_FORCE_PATH_STYLE=true
+    networks:
+      - observability-net
+    depends_on:
+      postgres-metadata:
+        condition: service_healthy
+      rclone-s3-gateway:
+        condition: service_started
+    restart: unless-stopped
+
 
 # 共通ネットワーク
 networks:
