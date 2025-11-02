@@ -2,6 +2,7 @@
 
 .env
 rclone.conf
+secrets.yml
 
 # 永続化データ
 /data/
